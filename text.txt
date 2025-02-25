@@ -10,77 +10,60 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-# Step 1: Load the dataset and check on its structure
+# Step 1: Load the dataset
 # Note: The dataset has a semicolon separator
 file_path = "cardio_train.csv"
 df = pd.read_csv(file_path, sep=';')
-print(df)
 
-# Checking dataset structure
+# Step 2: Data Preprocessing
+# Drop missing values
+df = df.dropna() #Removes all rows that have at least one missing value (NaN).
+
 
 # Convert age from days to years
 df['age'] = df['age'] // 365
-print(df[['age']].head())
 
-# Checking dataset shape (rows, columns)
-print(df.shape)  
+# Encode gender (1 = male, 2 = female)
+df['gender'] = df['gender'].map({1: 'Male', 2: 'Female'})
 
-# Checking dataset structure (non-null count, data types, memory usage)
-df.info()  
+# Define categories to plot
+categories = ['cholesterol', 'gluc', 'smoke', 'alco', 'active']
 
-# Checking summary statistics and rounding the values to 1 decimal place (mean, standard deviation, min, max, etc.) (transpose for better readability)
-print(df.describe().transpose().round(1))
+# Create separate plots for males and females with cardiovascular disease status
+plt.figure(figsize=(15, 10))
+plot_num = 1
+for gender in ['Male', 'Female']:
+    for cardio in [0, 1]:
+        plt.subplot(2, 3, plot_num)
+        subset = df[(df['gender'] == gender) & (df['cardio'] == cardio)]
+        for category in categories:
+            sns.histplot(subset[category], label=category, kde=True, element='step', stat='density')
+        plt.title(f'{gender} - Cardio: {cardio}')
+        plt.xlabel("Value")
+        plt.ylabel("Density")
+        plt.legend()
+        plot_num += 1
 
-# Step 2: Data Preprocessing
+plt.tight_layout()
+plt.show()
 
-# Drop missing values (if any, here there is none)  --> removes rows with missing values. *Note: This is not the best practice for handling missing data, we can use imputation techniques like mean, median, or mode.
-missing_rows = df[df.isnull().any(axis=1)]
-print(missing_rows)
-df = df.dropna() #Removes all rows that have at least one missing value (NaN).
-print(df.shape)  # Check the shape after dropping missing values
+# Plot the number of male and female patients with cardiovascular disease
+gender_cardio_counts = df.groupby(['gender', 'cardio']).size().unstack()
+
+gender_cardio_counts.plot(kind='bar', stacked=True, figsize=(10, 6), color=['skyblue', 'salmon'])
+plt.title("Number of Male and Female Patients with Cardiovascular Disease")
+plt.xlabel("Gender")
+plt.ylabel("Count")
+plt.legend(["No CVD", "CVD"])
+plt.show()
+
+
 
 # Check for duplicates and remove them
 duplicates = df.duplicated().sum()
 print(f"\nNumber of duplicate rows: {duplicates}")
 df = df.drop_duplicates()
-print(df.shape)  # Check the shape after dropping duplicate values
-
-# Dropping the 'id' column as it is not useful for the model training process
-df = df.drop(columns=['id'])
-print(df.head()) # Display the first few rows to confirm it's dropped
-
-#categorical variables can and should be included in modeling! The key thing is that most machine learning models require numerical input. So, if you have a categorical variable (like gender, cholesterol with levels Low, Normal, High), you need to convert it into a numerical format before including it in the model.
-# we need to inform model that  variables (like choelstero, gluc) are not continuous numerical variables, but ordinal variables: You can define the ordinal relationship using pandas' Categorical type
-# The model will treat these variables with their order in mind, rather than treating them as continuous numeric features.
-
-# Step 1: Check unique values for cholesterol and gluc
-print("Unique values for cholesterol:", df['cholesterol'].unique())
-print("Unique values for gluc:", df['gluc'].unique())
-
-# Step 2: Convert 'cholesterol' and 'gluc' to categorical with ordered levels
-cholesterol_order = pd.CategoricalDtype(categories=[1, 2, 3], ordered=True)
-gluc_order = pd.CategoricalDtype(categories=[1, 2, 3], ordered=True)
-
-# Step 3: Assign these types to the relevant columns
-df['cholesterol'] = df['cholesterol'].astype(cholesterol_order)
-df['gluc'] = df['gluc'].astype(gluc_order)
-
-# Verify changes
-print("Cholesterol dtype:", df['cholesterol'].dtype)
-print("Cholesterol categories:", df['cholesterol'].cat.categories)
-
-print("Gluc dtype:", df['gluc'].dtype)
-print("Gluc categories:", df['gluc'].cat.categories)
-
-# Check the first few rows to see the changes
-print(df.head())
-
-# Checking dataset structure Output after conversion: When you call df.info(), you can see that both cholesterol and gluc have the category dtype with the correct ordered categories, so the model knows how to interpret them.
-df.info()  
-
-#Exploration of data 
-
-#univariate analysis: Visualize the distribution of the target variable 'cardio'
+# Visualize the distribution of the target variable 'cardio'
 df['cardio'].value_counts().plot(kind='bar', color=['skyblue', 'salmon'])
 plt.title("Distribution of Target Variable (Cardio)")
 plt.xlabel("Cardio Status (0 = No Cardiovascular Disease, 1 = Cardiovascular Disease)")
@@ -88,14 +71,35 @@ plt.ylabel("Frequency")
 plt.xticks(rotation=0)
 plt.show()
 
-#bivariate analysis:
-sns.catplot(data=df, x='gender', y='cardio', kind='bar')
-# Add a title and labels to the axes
-plt.title('Cardiovascular Disease by Gender')
-plt.xlabel('Gender')
-plt.ylabel('Proportion with Cardiovascular Disease')
-# Display the plot
-plt.show()
+
+# Convert age from days to years
+df['age'] = df['age'] // 365
+
+# Separate input (X) and output (y)
+X = df.drop(columns=['cardio'])  # All features except the target Use 'cardio' as the target
+y = df['cardio']# Target variable (0 = No CVD, 1 = CVD)
+
+# Normalize data
+#using StandardScaler from sklearn.preprocessing.
+#all features have the same scale, improving model performance.
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X) #all features will have similar ranges → better for training the LSTM model!
+
+# Reshape for LSTM (samples, time steps, features)
+""" LSTM requires 3D input with the format:
+(samples, time steps, features)
+-samples → Number of rows (patients).
+-time steps → Number of time points per sample (here, 1).
+-features → Number of features (columns in X).
+LSTMs work with sequential time-series data  --> we only have one timestamp per patient (not a sequence). --> we reshape data with 1 time step. (1 time stamp, several features)
+""" 
+X_reshaped = X_scaled.reshape(X_scaled.shape[0], 1, X_scaled.shape[1])
+
+# Split dataset into training and testing
+""" Splits the data into 80% training and 20% testing.
+-stratify=y ensures that the distribution of cardio (0 and 1) is the same in both train and test sets.
+-random_state=42 → Ensures reproducibility (same split every time)""" 
+X_train, X_test, y_train, y_test = train_test_split(X_reshaped, y, test_size=0.2, stratify=y, random_state=42)
 
 # Step 3: Build LSTM Model
 model = Sequential([
